@@ -1,0 +1,172 @@
+---
+ - name: "Setup runner and Monitoring"
+   hosts: runner
+   remote_user: tomfox-mgnt
+   become: yes
+   
+   tasks:
+
+    - name: Create user
+      ansible.builtin.user:
+        name: runner
+        shell: /bin/bash
+        groups: wheel
+        password: $6$Y2G/v0ISuRtlFjSc$bnkgU3DFAJxk.q/U5hj9owZvTjS3rcCzLuCVo8GsqcHhs4lRZ9FTHbXUdodPWXAZiLCGtHqFNRWAMyeRIMTht.
+        append: yes
+    
+    - name: "Add authorized keys"
+      authorized_key:
+       user: runner
+       key: "{{ lookup('file', '~/.ssh/id_rsa.pub') }}"
+
+
+    - name: Change sshd config
+      copy:
+        src: files/sshd_config
+        dest: /etc/ssh/sshd_config
+        owner: root
+        group: root
+
+    - name: Restart service sshd
+      ansible.builtin.service:
+        name: sshd
+        state: restarted
+
+    - name: Set hostname to {{inventory_hostname}}
+      ansible.builtin.hostname:
+       name: "{{inventory_hostname}}"
+
+
+    - name: Add dns
+      copy:
+        src: files/resolv.conf
+        dest: /etc/resolv.conf
+        owner: root
+        group: root
+
+    - name: Config Network
+      copy:
+        src: files/NetworkManager.conf
+        dest: /etc/NetworkManager/NetworkManager.conf
+        owner: root
+        group: root
+
+    - name: Restart service NetworkManager
+      ansible.builtin.service:
+        name: NetworkManager
+        state: restarted
+
+ - name: "Add runner to dns records"
+   hosts: dns
+   remote_user: tomfox-mgnt
+   become: yes
+
+   tasks:
+    - name: Add runner to DNS record
+      ansible.builtin.lineinfile:
+       path: /etc/named/zones/db.tp-ynov.lab
+       line: "{{hostvars[item]['inventory_hostname']}}.tp-ynov.lab. IN A {{hostvars[item]['ansible_host']}}"
+      with_items:  "{{ groups['runner'] }}"
+
+    - name: Add runner to DNS record reverse
+      ansible.builtin.lineinfile:
+       path: /etc/named/zones/db.60.168.192
+       line: "{{hostvars[item]['ansible_host'].split('.')[-1]}} IN PTR {{hostvars[item]['inventory_hostname']}}.tp-ynov.lab"
+      with_items:  "{{ groups['runner'] }}"
+
+    - name: Restart service named
+      ansible.builtin.service:
+        name: named
+        state: restarted
+
+ - name: Installation des serveurs runners
+   hosts: runner
+   remote_user: runner
+   become: yes
+  
+   tasks:  
+
+    - name: Installation docker
+      ansible.builtin.shell:
+        cmd: dnf config-manager --add-repo=https://download.docker.com/linux/centos/docker-ce.repo 
+
+
+    - name: Installation de packets
+      dnf: name={{ item }} update_cache=yes state=latest
+      with_items:
+        - docker-ce
+        - docker-ce-cli
+        - containerd.io
+        - wget
+
+
+    - name: Installation docker
+      ansible.builtin.shell:  
+        cmd: dnf update
+
+    - name: Lancement du Service docker
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: yes
+  
+    - name: Création directory data
+      ansible.builtin.shell:  
+        cmd: mkdir -p /data/
+
+    - name: Installation gitlab-runner
+      ansible.builtin.shell:  
+        cmd: docker run -d --name gitlab-runner --restart always -v /var/run/docker.sock:/var/run/docker.sock -v /data/gitlab-runner:/etc/gitlab-runner gitlab/gitlab-runner:latest
+    
+    - name: Config gitlab-runner
+      ansible.builtin.shell:  
+        cmd: docker exec -it gitlab-runner gitlab-runner register --url "http://gitlab.tp-ynov.lab/" --registration-token "{{key}}" --description "{{inventory_hostname}}" --tag-list "docker" --executor "docker" --docker-image "rockylinux:8" -n
+
+    - name: Installation node_expoter
+      ansible.builtin.shell:
+        cmd: wget https://github.com/prometheus/node_exporter/releases/download/v1.3.1/node_exporter-1.3.1.linux-amd64.tar.gz
+
+    - name: Installation node_expoter
+      ansible.builtin.shell:
+        cmd: tar xvfz node_exporter-1.3.1.linux-amd64.tar.gz
+
+    - name: Permissions node_exporter
+      ansible.builtin.shell:
+        cmd: groupadd --system node_exporter && useradd -s /sbin/nologin --system -g node_exporter node_exporter && cp node_exporter-1.3.1.linux-amd64/node_exporter /usr/local/bin/ && chown node_exporter:node_exporter /usr/local/bin/node_exporter
+
+    - name: Add node_exporter conf
+      copy:
+        src: files/node_exporter.service
+        dest: /etc/systemd/system/node_exporter.service
+        owner: node_exporter
+        group: node_exporter
+        mode: '0600'
+
+    - name: Lancement du Service node_exporter
+      ansible.builtin.service:
+        name: node_exporter
+        state: started
+        enabled: yes
+    
+    - name: Firewall node_exporter
+      ansible.builtin.shell:
+        cmd: firewall-cmd --new-zone=prometheus --permanent && firewall-cmd --reload && firewall-cmd --zone=prometheus --add-source=192.168.60.11 --permanent && firewall-cmd --zone=prometheus --add-port=9100/tcp --permanent && firewall-cmd --reload
+
+ - name: "Add runner to dns records"
+   hosts: dns
+   remote_user: tomfox-mgnt
+   become: yes
+
+   tasks:
+
+    - name: Add new runner to Prometheus
+      ansible.builtin.replace:
+       path: /etc/prometheus/prometheus.yml
+       regexp: "9100']"
+       replace: "9100','{{hostvars[item]['inventory_hostname']}}.tp-ynov.lab:9100']"
+      with_items:  "{{ groups['runner'] }}"
+
+    - name: Restart service prometheus
+      ansible.builtin.service:
+        name: prometheus
+        state: restarted

@@ -5,10 +5,15 @@
 
 ```
 sudo hostname gitlab
+sudo sed -i 's/enforcing/permissive/g' /etc/selinux/config
 sudo nano /etc/hostname
-nmcli con up enp0s8
+sudo nmcli con up enp0s8
+sudo nmcli con up enp0s3
 sudo nano /etc/sysconfig/network-scripts/ifcfg-enp0s8
+sudo nmcli con reload
+sudo nmcli con up enp0s3
 ```
+
 ![](https://i.imgur.com/31lMgTL.png)
 
 ![](https://i.imgur.com/CoHUx7g.png)
@@ -123,8 +128,7 @@ Last login: Tue Sep 13 08:09:52 2022 from 192.168.60.1
 
 ```
 sudo dnf install bind bind-utils
-sudo systemctl enable named
-sudo systemctl start named
+sudo systemctl enable --now named
 ```
 
 ```
@@ -347,6 +351,90 @@ Après avoir changer le root password
 ![](https://i.imgur.com/XsVqUUg.png)
 
 (Je n'utilise pas gitlab.tp-ynov.lab car je suis sur le wifi ynov et du coup trop chiant de changer les dns)
+
+Maintenant pour le monitoring on va activé grafana dans la config de gitlab
+
+
+## Runner
+
+```
+[tomfox@runner ~]$ sudo dnf config-manager --add-repo=https://download.docker.com/linux/centos/docker-ce.repo
+[sudo] password for tomfox: 
+Adding repo from: https://download.docker.com/linux/centos/docker-ce.repo
+[tomfox@runner ~]$ sudo dnf update
+Docker CE Stable - x86_64                                                                                                                                                                                   151 kB/s |  27 kB     00:00    
+Dependencies resolved.
+Nothing to do.
+Complete!
+[tomfox@runner ~]$ sudo dnf install docker-ce docker-ce-cli containerd.io -y
+Last metadata expiration check: 0:00:13 ago on Wed 14 Sep 2022 12:44:51 PM EDT.
+Dependencies resolved.
+[...]
+Installed:
+  container-selinux-2:2.188.0-1.module+el8.6.0+997+05c9d812.noarch           containerd.io-1.6.8-3.1.el8.x86_64               docker-ce-3:20.10.18-3.el8.x86_64           docker-ce-cli-1:20.10.18-3.el8.x86_64                            
+  docker-ce-rootless-extras-20.10.18-3.el8.x86_64                            docker-scan-plugin-0.17.0-3.el8.x86_64           fuse-common-3.3.0-15.el8.x86_64             fuse-overlayfs-1.9-1.module+el8.6.0+997+05c9d812.x86_64          
+  fuse3-3.3.0-15.el8.x86_64                                                  fuse3-libs-3.3.0-15.el8.x86_64                   libcgroup-0.41-19.el8.x86_64                libslirp-4.4.0-1.module+el8.6.0+997+05c9d812.x86_64              
+  slirp4netns-1.2.0-2.module+el8.6.0+997+05c9d812.x86_64                    
+
+Complete!
+[tomfox@runner ~]$ sudo systemctl enable --now  docker
+Created symlink /etc/systemd/system/multi-user.target.wants/docker.service → /usr/lib/systemd/system/docker.service.
+[tomfox@runner ~]$ sudo usermod -aG docker tomfox
+[tomfox@runner ~]$ sudo mkdir -p /data/
+[tomfox@runner ~]$ sudo docker run -d --name gitlab-runner --restart always -v /var/run/docker.sock:/var/run/docker.sock -v /data/gitlab-runner:/etc/gitlab-runner gitlab/gitlab-runner:latest
+Unable to find image 'gitlab/gitlab-runner:latest' locally
+latest: Pulling from gitlab/gitlab-runner
+3b65ec22a9e9: Pull complete 
+4703da0c5d5d: Pull complete 
+7ced82f45b56: Pull complete 
+Digest: sha256:860d4a3fec7a27f833e62d25060d6bc2608c5212852bff6c243c43f4899b88ff
+Status: Downloaded newer image for gitlab/gitlab-runner:latest
+441a97e552573c0f6fe7d5d52589fef6c6de9fb303e04509203ff4d0cb7e3f2b
+[tomfox@runner ~]$ sudo docker exec -it gitlab-runner gitlab-runner register
+Runtime platform                                    arch=amd64 os=linux pid=14 revision=bbcb5aba version=15.3.0
+Running in system-mode.                            
+                                                   
+Enter the GitLab instance URL (for example, https://gitlab.com/):
+http://gitlab.tp-ynov.lab/
+Enter the registration token:
+GR1348941Xx_sS1XsJbUpzhsRJasY
+Enter a description for the runner:
+[441a97e55257]: runner1
+Enter tags for the runner (comma-separated):
+docker
+Enter optional maintenance note for the runner:
+
+Registering runner... succeeded                     runner=GR1348941Xx_sS1Xs
+Enter an executor: custom, parallels, shell, virtualbox, docker+machine, docker, docker-ssh, ssh, docker-ssh+machine, kubernetes:
+docker
+Enter the default Docker image (for example, ruby:2.7):
+rockylinux:8
+Runner registered successfully. Feel free to start it, but if it's running already the config should be automatically reloaded!
+ 
+Configuration (with the authentication token) was saved in "/etc/gitlab-runner/config.toml"
+```
+
+Mtn notre runner est visible
+
+![](https://i.imgur.com/npxuJuk.png)
+
+
+![](https://i.imgur.com/UBh2qoK.png)
+
+après avoir crée notre pipeline il est temps de le lancer
+
+```
+[tomfox@runner ~]$ sudo docker ps
+CONTAINER ID   IMAGE                         COMMAND                  CREATED             STATUS             PORTS     NAMES
+3511ffdac891   8cf70153e062                  "sh -c 'if [ -x /usr…"   6 seconds ago       Up 5 seconds                 runner-rhtksvsc-project-34-concurrent-0-bfe605dc5a6ce100-build-2
+441a97e55257   gitlab/gitlab-runner:latest   "/usr/bin/dumb-init …"   About an hour ago   Up About an hour             gitlab-runner
+[tomfox@runner ~]$ sudo docker logs -f runner-rhtksvsc-project-34-concurrent-0-bfe605dc5a6ce100-build-2
+$ echo "Je suis un test"
+Je suis un test
+$ sleep 60
+$ echo "Oui ça a marché"
+Oui ça a marché
+```
 
 ## Monitoring (Grafana/Prometheus/Node Exporter)
 
@@ -574,6 +662,7 @@ sur grafana je vais utiliser ce dashboard https://grafana.com/grafana/dashboards
 
 Voila on peut monitorer notre server dns, il nous manque plus qu'a installer node_exporter sur nos deux autre server, ainsi notre prometheus qui run sur le server dns ira scrape les data des node explorer des deux autre serveur sur le port 9100 (on va setup a la fin une règle au firewall comme quoi uniquement le server dns pourra accéder au port 9100 des autre server)
 
+
 ### Node sur tout les serv
 
 
@@ -637,4 +726,59 @@ qlq petit screen ;)
 
 ![](https://i.imgur.com/D3frO8L.png)
 
-Voila tout est fini pour le monitoring
+Maintenant pour avoir un monitoring plus poussé pour le server gitlab nous allons activé le module grafana de gitlab
+
+```
+[tomfox@gitlab ~]$ sudo nvim /etc/gitlab/gitlab.rb
+
+# grafana['enable'] = false -->  grafana['enable'] = true
+
+[tomfox@gitlab ~]$ sudo gitlab-ctl reconfigure
+```
+
+Voici tous les dashboard par default disponible
+
+![](https://i.imgur.com/HSh3K1C.png)
+
+état de la base de données gitlab:
+
+![](https://i.imgur.com/51UMeWy.png)
+
+interface web gitlab:
+
+![](https://i.imgur.com/DeCFd9m.png)
+
+![](https://i.imgur.com/Mf4ocX6.png)
+
+
+## Déploiment automatique (Anisble)
+
+Pour facilité le déploiment automatique qlq changement on était fait
+
+sur le server dns:
+/etc/named.conf
+```
+acl "trusted" {
+        192.168.60.1;   # ZenBook
+        192.168.60.10;  # Gitlab
+        192.168.60.11;  # DNS
+        192.168.60.12;  # Runner
+        192.168.60.13;  # Runner2
+};
+```
+
+Changer en
+
+```
+acl "trusted" {
+        192.168.60.0/24;
+};
+```
+
+Pour ansible on part aussi du principe que les host ont une en ip static et ne sont plus en dhcp, et aussi on fera l'install avec tomfox-mgnt
+
+
+Voici la video de démo du déploiment https://youtu.be/AD4XojMUb6s
+(Dsl la video est à 1 fps)
+
+Tout ce qu'on a utiliser est dans le dossier ansible de ce repo github

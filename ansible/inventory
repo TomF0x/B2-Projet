@@ -1,0 +1,7 @@
+[runner]
+runner1 ansible_host=192.168.60.12 key=GR1348941-xYPMo9iXsdJSQadboVB
+runner2 ansible_host=192.168.60.13 key=GR1348941-xYPMo9iXsdJSQadboVB
+runner3 ansible_host=192.168.60.14 key=GR1348941-xYPMo9iXsdJSQadboVB
+
+[dns]
+dns.tp-ynov.lab
